@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CopyMe - Saved Links & Clips</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>CopyMe</h1>
+          <span id="itemCount" class="item-count">0 items</span>
+        </div>
+      </div>
+      <button id="saveTabBtn" class="btn btn-secondary btn-sm" title="Save current active tab URL and title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+        <span>+ Current Tab</span>
+      </button>
+    </header>
+
+    <!-- Add Item Section -->
+    <section class="add-section">
+      <div class="input-wrapper">
+        <textarea 
+          id="clipInput" 
+          rows="2" 
+          placeholder="Paste or type a link / text to save..." 
+          spellcheck="false"
+        ></textarea>
+        <div class="input-actions">
+          <span class="shortcut-hint">Enter ↵ to save</span>
+          <button id="addBtn" class="btn btn-primary" title="Save clip">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Save</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Search and Filter Bar -->
+    <section class="filter-section">
+      <div class="search-box">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="searchInput" placeholder="Search saved clips & links..." />
+        <button id="clearSearchBtn" class="clear-search-btn" title="Clear search" style="display: none;">✕</button>
+      </div>
+
+      <div class="filter-chips">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="link">🔗 Links</button>
+        <button class="chip" data-filter="text">📝 Text</button>
+      </div>
+    </section>
+
+    <!-- Autofill Helper Notice -->
+    <div class="autofill-hint">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+      </svg>
+      <span>Click card to auto-fill form field & copy</span>
+    </div>
+
+    <!-- Clips List -->
+    <main class="clips-container" id="clipsList">
+      <!-- Dynamic list items will be injected here -->
+    </main>
+
+    <!-- Empty State -->
+    <div id="emptyState" class="empty-state" style="display: none;">
+      <div class="empty-icon">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+          <line x1="12" y1="18" x2="12" y2="12"></line>
+          <line x1="9" y1="15" x2="15" y2="15"></line>
+        </svg>
+      </div>
+      <p class="empty-title">No clips saved yet</p>
+      <p class="empty-desc">Type in the box above or click <strong>"+ Current Tab"</strong> to save links you want to copy or auto-fill.</p>
+    </div>
+
+    <!-- No Search Results State -->
+    <div id="noResultsState" class="empty-state" style="display: none;">
+      <p class="empty-title">No matching clips found</p>
+      <p class="empty-desc">Try searching for a different keyword.</p>
+    </div>
+
+    <!-- Footer Actions -->
+    <footer class="app-footer">
+      <div class="footer-left">
+        <button id="exportBtn" class="footer-link-btn" title="Export clips as JSON">Export</button>
+        <button id="importBtn" class="footer-link-btn" title="Import clips from JSON">Import</button>
+        <input type="file" id="importFileInput" accept=".json" style="display: none;" />
+      </div>
+      <div class="footer-right">
+        <button id="clearAllBtn" class="footer-link-btn text-danger" title="Delete all saved clips">Clear All</button>
+      </div>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+      <span id="toastIcon">✓</span>
+      <span id="toastMsg">Copied to clipboard!</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

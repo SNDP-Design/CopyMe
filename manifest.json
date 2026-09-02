@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "CopyMe - Saved Links & Clips",
+  "version": "1.1.0",
+  "description": "Easily save links, tab URLs, and text snippets to copy or auto-fill into forms in one click.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "clipboardWrite"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "CopyMe - Saved Links & Clips"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
