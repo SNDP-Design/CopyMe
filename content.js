@@ -245,6 +245,47 @@
     return false;
   }
 
+  function collapseExactDuplicate(element, text) {
+    if (!element || !text) return false;
+
+    if (isInputOrTextarea(element)) {
+      const value = element.value || '';
+      if (value !== text + text) return false;
+
+      try {
+        const proto = Object.getPrototypeOf(element);
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (descriptor && descriptor.set) descriptor.set.call(element, text);
+        else element.value = text;
+        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (isContentEditableElement(element)) {
+      const targetEditor = element.isContentEditable ? element : (element.closest('[contenteditable]') || element);
+      if (targetEditor.textContent !== text + text) return false;
+
+      try {
+        targetEditor.textContent = text;
+        targetEditor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          composed: true,
+          inputType: 'insertText',
+          data: text
+        }));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    return false;
+  }
+
   function triggerVisualFeedback(el) {
     try {
       const originalOutline = el.style.outline;
@@ -286,6 +327,10 @@
       const target = getTargetElement();
       if (!target) {
         return { ready: true, filled: false, reason: 'no_input_focused' };
+      }
+
+      if (collapseExactDuplicate(target, text)) {
+        return { ready: true, filled: true, duplicateRemoved: true };
       }
 
       const success = insertTextAtCursor(target, text || '');
