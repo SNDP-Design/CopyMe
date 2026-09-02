@@ -212,28 +212,50 @@ async function autofillAndCopy(text, btnElement = null) {
           } catch (_) {}
         }
 
-        if (tab && tab.id !== undefined && tab.url &&
-            !tab.url.startsWith('chrome://') &&
-            !tab.url.startsWith('edge://') &&
-            !tab.url.startsWith('chrome-extension://')) {
-          const sendAutofill = (tabId) => new Promise((resolve) => {
-            chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
-              if (chrome.runtime.lastError || !res) {
-                resolve({ filled: false, missing: true });
-              } else {
-                resolve({ filled: res.filled === true, missing: false });
+        const isRestrictedPage = tab && tab.url && (
+          tab.url.startsWith('chrome://') ||
+          tab.url.startsWith('edge://') ||
+          tab.url.startsWith('chrome-extension://')
+        );
+
+        if (tab && tab.id !== undefined && !isRestrictedPage) {
+          const runAutofill = async (tabId) => {
+            let frameResults = await chrome.scripting.executeScript({
+              target: { tabId, allFrames: true },
+              func: () => {
+                if (typeof globalThis.__copymeGetFocus !== 'function') {
+                  return { ready: false, hasTarget: false, focusedAt: 0 };
+                }
+                return globalThis.__copymeGetFocus();
               }
             });
-          });
 
-          let result = await sendAutofill(tab.id);
+            const readyFrames = frameResults.filter(frame => frame.result && frame.result.ready === true);
+            if (readyFrames.length === 0) return { filled: false, missing: true };
+
+            const targetFrame = readyFrames
+              .filter(frame => frame.result.hasTarget === true)
+              .sort((a, b) => b.result.focusedAt - a.result.focusedAt)[0];
+
+            if (!targetFrame) return { filled: false, missing: false };
+
+            frameResults = await chrome.scripting.executeScript({
+              target: { tabId, frameIds: [targetFrame.frameId] },
+              func: (value) => globalThis.__copymeAutofill(value),
+              args: [text]
+            });
+
+            return { filled: frameResults.some(frame => frame.result && frame.result.filled === true), missing: false };
+          };
+
+          let result = await runAutofill(tab.id);
           if (result.missing) {
             try {
               await chrome.scripting.executeScript({
                 target: { tabId: tab.id, allFrames: true },
                 files: ['content.js']
               });
-              result = await sendAutofill(tab.id);
+              result = await runAutofill(tab.id);
             } catch (injectErr) {
               console.warn('Could not inject content.js:', injectErr);
             }

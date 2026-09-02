@@ -5,13 +5,11 @@
  */
 
 (function () {
-  if (window.__copyme_injected) return;
-  window.__copyme_injected = true;
-
   let lastFocusedElement = null;
   let savedSelectionStart = null;
   let savedSelectionEnd = null;
   let savedRange = null;
+  let lastFocusedAt = 0;
 
   // Deduplication lock
   let lastProcessedTime = 0;
@@ -64,6 +62,7 @@
     }
 
     lastFocusedElement = el;
+    lastFocusedAt = Date.now();
 
     if (isInputOrTextarea(el)) {
       try {
@@ -200,22 +199,46 @@
       }
 
       // Single-pass native insertText ONLY:
+      let inserted = false;
       try {
-        document.execCommand('insertText', false, text);
-      } catch (_) {
+        inserted = document.execCommand('insertText', false, text);
+      } catch (_) {}
+
+      if (!inserted) {
         try {
-          const inputEv = new InputEvent('beforeinput', {
+          const selection = window.getSelection();
+          const range = selection && selection.rangeCount > 0
+            ? selection.getRangeAt(0)
+            : document.createRange();
+
+          if (!selection || selection.rangeCount === 0) {
+            range.selectNodeContents(targetEditor);
+            range.collapse(false);
+          }
+
+          range.deleteContents();
+          const textNode = document.createTextNode(text);
+          range.insertNode(textNode);
+          range.setStartAfter(textNode);
+          range.collapse(true);
+
+          if (selection) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+
+          targetEditor.dispatchEvent(new InputEvent('input', {
             bubbles: true,
-            cancelable: true,
+            composed: true,
             inputType: 'insertText',
             data: text
-          });
-          targetEditor.dispatchEvent(inputEv);
+          }));
+          inserted = true;
         } catch (_) {}
       }
 
-      triggerVisualFeedback(targetEditor);
-      return true;
+      if (inserted) triggerVisualFeedback(targetEditor);
+      return inserted;
     }
 
     return false;
@@ -249,42 +272,44 @@
       return deepActive;
     }
 
-    const inputs = document.querySelectorAll(
-      'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly]), [contenteditable], [role="textbox"]'
-    );
-    for (const input of inputs) {
-      if (isEditable(input) && input.offsetParent !== null) {
-        return input;
-      }
-    }
-
     return null;
   }
 
+  function autofillFocusedField(text) {
+    try {
+      const now = Date.now();
+      if (text === lastProcessedText && (now - lastProcessedTime < 400)) {
+        return { ready: true, filled: true, deduplicated: true };
+      }
+
+      const target = getTargetElement();
+      if (!target) {
+        return { ready: true, filled: false, reason: 'no_input_focused' };
+      }
+
+      const success = insertTextAtCursor(target, text || '');
+      if (success) {
+        lastProcessedText = text;
+        lastProcessedTime = now;
+      }
+
+      return { ready: true, filled: success, tagName: target.tagName };
+    } catch (err) {
+      console.error('Autofill error in content script:', err);
+      return { ready: true, filled: false, error: err.toString() };
+    }
+  }
+
+  globalThis.__copymeAutofill = autofillFocusedField;
+  globalThis.__copymeGetFocus = () => ({
+    ready: true,
+    hasTarget: !!getTargetElement(),
+    focusedAt: lastFocusedAt || (isEditable(getDeepActiveElement()) ? Date.now() : 0)
+  });
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'autofill') {
-      try {
-        const now = Date.now();
-        if (request.text === lastProcessedText && (now - lastProcessedTime < 400)) {
-          sendResponse({ success: true, filled: true, deduplicated: true });
-          return true;
-        }
-
-        const target = getTargetElement();
-        if (target) {
-          const success = insertTextAtCursor(target, request.text || '');
-          if (success) {
-            lastProcessedText = request.text;
-            lastProcessedTime = now;
-          }
-          sendResponse({ success: true, filled: success, tagName: target.tagName });
-        } else {
-          sendResponse({ success: false, filled: false, reason: 'no_input_focused' });
-        }
-      } catch (err) {
-        console.error('Autofill error in content script:', err);
-        sendResponse({ success: false, filled: false, error: err.toString() });
-      }
+      sendResponse(autofillFocusedField(request.text));
       return true;
     } else if (request.action === 'ping') {
       sendResponse({ status: 'ready', hasTarget: !!getTargetElement() });
