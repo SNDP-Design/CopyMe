@@ -57,6 +57,12 @@
   function recordCursorPosition(el) {
     if (!el || !isEditable(el)) return;
 
+    if (lastFocusedElement !== el) {
+      savedSelectionStart = null;
+      savedSelectionEnd = null;
+      savedRange = null;
+    }
+
     lastFocusedElement = el;
 
     if (isInputOrTextarea(el)) {
@@ -72,9 +78,13 @@
     }
 
     if (isContentEditableElement(el)) {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        savedRange = sel.getRangeAt(0).cloneRange();
+      try {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          savedRange = sel.getRangeAt(0).cloneRange();
+        }
+      } catch (_) {
+        savedRange = null;
       }
     }
   }
@@ -109,44 +119,68 @@
 
     // Case 1: Standard <input> and <textarea>
     if (isInputOrTextarea(element)) {
-      element.focus();
+      try { element.focus(); } catch (_) {}
       const orig = element.value || '';
-      let start = typeof element.selectionStart === 'number' ? element.selectionStart : orig.length;
-      let end = typeof element.selectionEnd === 'number' ? element.selectionEnd : orig.length;
+      let start = orig.length;
+      let end = orig.length;
+
+      try {
+        if (typeof element.selectionStart === 'number') {
+          start = element.selectionStart;
+          end = typeof element.selectionEnd === 'number' ? element.selectionEnd : start;
+        }
+      } catch (_) {
+        // Selection API not supported for this input type (e.g. email, number, date)
+      }
 
       if (typeof savedSelectionStart === 'number') {
-        start = Math.max(0, Math.min(savedSelectionStart, orig.length));
-        end = Math.max(start, Math.min(savedSelectionEnd !== null ? savedSelectionEnd : savedSelectionStart, orig.length));
+        try {
+          start = Math.max(0, Math.min(savedSelectionStart, orig.length));
+          end = Math.max(start, Math.min(savedSelectionEnd !== null ? savedSelectionEnd : savedSelectionStart, orig.length));
+        } catch (_) {}
       }
 
       try {
         element.setSelectionRange(start, end);
       } catch (_) {}
 
-      if (typeof element.setRangeText === 'function') {
-        element.setRangeText(text, start, end, 'end');
-      } else {
+      let setSuccess = false;
+      try {
+        if (typeof element.setRangeText === 'function') {
+          element.setRangeText(text, start, end, 'end');
+          setSuccess = true;
+        }
+      } catch (_) {
+        setSuccess = false;
+      }
+
+      if (!setSuccess) {
         const newVal = orig.substring(0, start) + text + orig.substring(end);
-        // Using native setter for React 16+ compatibility if needed
-        const proto = Object.getPrototypeOf(element);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (descriptor && descriptor.set) {
-          descriptor.set.call(element, newVal);
-        } else {
-          element.value = newVal;
+        try {
+          const proto = Object.getPrototypeOf(element);
+          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(element, newVal);
+          } else {
+            element.value = newVal;
+          }
+        } catch (_) {
+          element.value = orig.substring(0, start) + text + orig.substring(end);
         }
         const newPos = start + text.length;
         try { element.setSelectionRange(newPos, newPos); } catch (_) {}
       }
 
       // Notify React's internal value tracker
-      const tracker = element._valueTracker;
-      if (tracker) {
-        tracker.setValue(orig);
-      }
+      try {
+        const tracker = element._valueTracker;
+        if (tracker) {
+          tracker.setValue(orig);
+        }
+      } catch (_) {}
 
-      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      try { element.dispatchEvent(new Event('input', { bubbles: true, composed: true })); } catch (_) {}
+      try { element.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (_) {}
 
       triggerVisualFeedback(element);
       return true;
@@ -154,8 +188,8 @@
 
     // Case 2: Rich Text Editors (Twitter/X, Claude, ChatGPT, Notion, Discord, ProseMirror, Lexical, Draft.js)
     if (isContentEditableElement(element)) {
-      const targetEditor = element.isContentEditable ? element : (element.closest('[contenteditable="true"]') || element);
-      targetEditor.focus();
+      const targetEditor = element.isContentEditable ? element : (element.closest('[contenteditable]') || element);
+      try { targetEditor.focus(); } catch (_) {}
 
       if (savedRange) {
         try {
@@ -166,12 +200,9 @@
       }
 
       // Single-pass native insertText ONLY:
-      // execCommand naturally triggers Blink's native beforeinput/input events which the editor processes.
-      // NEVER dispatch secondary beforeinput or paste events when execCommand runs, as that creates duplicate insertion.
       try {
         document.execCommand('insertText', false, text);
       } catch (_) {
-        // Only if execCommand threw an exception:
         try {
           const inputEv = new InputEvent('beforeinput', {
             bubbles: true,
@@ -218,7 +249,9 @@
       return deepActive;
     }
 
-    const inputs = document.querySelectorAll('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), [contenteditable="true"]');
+    const inputs = document.querySelectorAll(
+      'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly]), [contenteditable], [role="textbox"]'
+    );
     for (const input of inputs) {
       if (isEditable(input) && input.offsetParent !== null) {
         return input;
@@ -230,23 +263,27 @@
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'autofill') {
-      const now = Date.now();
-      // Only deduplicate truly rapid-fire duplicate messages (same text within 400ms)
-      // This prevents double-fire if the message is somehow echoed, but allows
-      // the user to deliberately click the same card twice.
-      if (request.text === lastProcessedText && (now - lastProcessedTime < 400)) {
-        sendResponse({ success: true, filled: true, deduplicated: true });
-        return true;
-      }
-      lastProcessedText = request.text;
-      lastProcessedTime = now;
+      try {
+        const now = Date.now();
+        if (request.text === lastProcessedText && (now - lastProcessedTime < 400)) {
+          sendResponse({ success: true, filled: true, deduplicated: true });
+          return true;
+        }
 
-      const target = getTargetElement();
-      if (target) {
-        const success = insertTextAtCursor(target, request.text || '');
-        sendResponse({ success: true, filled: success, tagName: target.tagName });
-      } else {
-        sendResponse({ success: false, filled: false, reason: 'no_input_focused' });
+        const target = getTargetElement();
+        if (target) {
+          const success = insertTextAtCursor(target, request.text || '');
+          if (success) {
+            lastProcessedText = request.text;
+            lastProcessedTime = now;
+          }
+          sendResponse({ success: true, filled: success, tagName: target.tagName });
+        } else {
+          sendResponse({ success: false, filled: false, reason: 'no_input_focused' });
+        }
+      } catch (err) {
+        console.error('Autofill error in content script:', err);
+        sendResponse({ success: false, filled: false, error: err.toString() });
       }
       return true;
     } else if (request.action === 'ping') {

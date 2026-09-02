@@ -82,6 +82,31 @@ function isUrl(string) {
   return urlPattern.test(trimmed);
 }
 
+// Keep imported backups compatible with older versions and reject malformed data.
+function normalizeImportedClip(item, index) {
+  if (!item || typeof item !== 'object' || typeof item.content !== 'string') {
+    return null;
+  }
+
+  const content = item.content.trim();
+  if (!content) return null;
+
+  const type = item.type === 'link' || item.type === 'text'
+    ? item.type
+    : (isUrl(content) ? 'link' : 'text');
+
+  return {
+    id: typeof item.id === 'string' && item.id.trim()
+      ? item.id
+      : `imported_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+    content,
+    title: typeof item.title === 'string' ? item.title.trim() : '',
+    type,
+    pinned: item.pinned === true,
+    createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now()
+  };
+}
+
 // Format URL for opening
 function formatUrl(url) {
   const trimmed = url.trim();
@@ -210,7 +235,19 @@ async function autofillAndCopy(text, btnElement = null) {
 
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        let tab = null;
+        try {
+          const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+          if (tabs && tabs.length > 0) tab = tabs[0];
+        } catch (_) {}
+
+        if (!tab) {
+          try {
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tabs && tabs.length > 0) tab = tabs[0];
+          } catch (_) {}
+        }
+
         if (tab && tab.id && tab.url &&
             !tab.url.startsWith('chrome://') &&
             !tab.url.startsWith('edge://') &&
@@ -369,7 +406,14 @@ function handleImportFile(event) {
       const imported = JSON.parse(e.target.result);
       if (Array.isArray(imported)) {
         const existingIds = new Set(clips.map(c => c.id));
-        const newItems = imported.filter(item => item && item.content && !existingIds.has(item.id));
+        const newItems = [];
+        imported.forEach((rawItem, index) => {
+          const item = normalizeImportedClip(rawItem, index);
+          if (item && !existingIds.has(item.id)) {
+            existingIds.add(item.id);
+            newItems.push(item);
+          }
+        });
         
         clips = [...newItems, ...clips];
         await storage.set('clips', clips);
@@ -513,8 +557,10 @@ function render() {
           <polyline points="15 3 21 3 21 9"></polyline>
           <line x1="10" y1="14" x2="21" y2="3"></line>
         </svg>
-        <span>${clip.title && clip.title !== clip.content ? clip.title : clip.content}</span>
       `;
+      const linkLabel = document.createElement('span');
+      linkLabel.textContent = clip.title && clip.title !== clip.content ? clip.title : clip.content;
+      link.appendChild(linkLabel);
       contentBody.appendChild(link);
     } else {
       contentBody.textContent = clip.content;
