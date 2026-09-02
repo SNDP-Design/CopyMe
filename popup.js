@@ -305,7 +305,7 @@ async function autofillAndCopy(text, btnElement = null) {
 
     // Toast feedback
     if (autofilled) {
-      showToast('Auto-filled into form & copied!', '⚡');
+      showToast('Filled into the page & copied!', '⚡');
     } else if (noEditableField && copied) {
       showToast('Copied — click inside a field first', 'i');
     } else if (copied) {

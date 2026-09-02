@@ -3,7 +3,7 @@
    Monochrome / Minimalist Black & White Theme with Dark & Light support
    ========================================================================== */
 
-:root {
+:root, :host, .copyme-panel {
   --bg-app: #ffffff;
   --bg-card: #ffffff;
   --bg-card-hover: #fafafa;
@@ -45,7 +45,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root, :host, .copyme-panel {
     --bg-app: #09090b;
     --bg-card: #18181b;
     --bg-card-hover: #27272a;
@@ -108,6 +108,36 @@ body {
   padding: 14px 16px;
   gap: 10px;
   flex: 1;
+}
+
+.copyme-panel {
+  position: relative;
+  font-family: var(--font-family);
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  width: 380px;
+  max-height: 580px;
+  min-height: 420px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border-color);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.close-panel-btn {
+  color: var(--text-primary) !important;
+}
+
+.copyme-panel .toast {
+  position: absolute;
 }
 
 /* ==========================================================================

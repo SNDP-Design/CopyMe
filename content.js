@@ -5,6 +5,9 @@
  */
 
 (function () {
+  if (globalThis.__copymeContentLoaded) return;
+  globalThis.__copymeContentLoaded = true;
+
   let lastFocusedElement = null;
   let savedSelectionStart = null;
   let savedSelectionEnd = null;
@@ -223,44 +226,10 @@
         } catch (_) {}
       }
 
-      // Single-pass native insertText ONLY:
-      let inserted = false;
-      try {
-        // Some editors insert successfully but return false from execCommand.
-        // Treat the command as one insertion so the fallback cannot duplicate it.
-        document.execCommand('insertText', false, text);
-        inserted = (targetEditor.textContent || '') !== beforeText;
-      } catch (_) {
-        try {
-          const selection = window.getSelection();
-          const range = selection && selection.rangeCount > 0
-            ? selection.getRangeAt(0)
-            : document.createRange();
-
-          if (!selection || selection.rangeCount === 0) {
-            range.selectNodeContents(targetEditor);
-            range.collapse(false);
-          }
-
-          range.deleteContents();
-          const textNode = document.createTextNode(text);
-          range.insertNode(textNode);
-          range.setStartAfter(textNode);
-          range.collapse(true);
-
-          if (selection) {
-            selection.removeAllRanges();
-            selection.addRange(range);
-          }
-
-          targetEditor.dispatchEvent(new InputEvent('input', {
-            bubbles: true,
-            composed: true,
-            inputType: 'insertText',
-            data: text
-          }));
-          inserted = true;
-        } catch (_) {}
+      let inserted = insertPlainText(targetEditor, text, targetEditor.ownerDocument || document);
+      if (!inserted) {
+        inserted = (targetEditor.textContent || '') !== beforeText ||
+          (targetEditor.textContent || '').includes(text);
       }
 
       if (inserted) triggerVisualFeedback(targetEditor);
@@ -268,6 +237,76 @@
     }
 
     return false;
+  }
+
+  function readElementText(target) {
+    if (!target) return '';
+    if (typeof target.value === 'string') return target.value;
+    return target.textContent || '';
+  }
+
+  function insertPlainText(target, text, doc = document) {
+    if (!target || text === undefined || text === null) return false;
+    const view = doc.defaultView || window;
+    const before = readElementText(target);
+
+    try { target.focus(); } catch (_) {}
+
+    try { doc.execCommand('insertText', false, text); } catch (_) {}
+
+    try {
+      target.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        inputType: 'insertText',
+        data: text
+      }));
+      target.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        inputType: 'insertText',
+        data: text
+      }));
+    } catch (_) {}
+
+    try {
+      const textEvent = doc.createEvent('TextEvent');
+      textEvent.initTextEvent('textInput', true, true, view, text);
+      target.dispatchEvent(textEvent);
+    } catch (_) {
+      try {
+        const ev = new Event('textInput', { bubbles: true, cancelable: true, composed: true });
+        ev.data = text;
+        target.dispatchEvent(ev);
+      } catch (_) {}
+    }
+
+    if (readElementText(target) !== before || readElementText(target).includes(text)) {
+      return true;
+    }
+
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      const orig = target.value || '';
+      let start = orig.length;
+      let end = orig.length;
+      try {
+        if (typeof target.selectionStart === 'number') {
+          start = target.selectionStart;
+          end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
+        }
+      } catch (_) {}
+      target.value = orig.slice(0, start) + text + orig.slice(end);
+      try {
+        const pos = start + text.length;
+        target.setSelectionRange(pos, pos);
+      } catch (_) {}
+      target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      return true;
+    }
+
+    return readElementText(target) !== before;
   }
 
   function collapseExactDuplicate(element, text) {
@@ -311,32 +350,109 @@
     return false;
   }
 
-  function pasteIntoGoogleSheets(text) {
-    if (!isGoogleSheetsPage() || !lastSheetsSelectionAt) return false;
-
-    const active = getDeepActiveElement();
-    const target = active && active !== document.body
-      ? active
-      : (document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]') || document.body);
-
-    try {
-      target.focus();
-      return document.execCommand('paste');
-    } catch (_) {
-      return false;
+  function getSheetsCellInput() {
+    const selectors = [
+      '#t-formula-bar-input-container .cell-input',
+      '#t-formula-bar-input-container [contenteditable="true"]',
+      '.formula-content .cell-input',
+      'div.cell-input[contenteditable="true"]',
+      'textarea.cell-input',
+      '.cell-input'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && !el.closest('#t-name-box-container, .name-box, [aria-label="Name box"]')) {
+        return el;
+      }
     }
+    return null;
   }
 
-  function pasteIntoGoogleDocs(target) {
-    if (!target || !isGoogleDocsPage()) return false;
+  function pasteIntoGoogleSheets(text) {
+    if (!isGoogleSheetsPage()) return false;
+
+    const grid = document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]');
+    if (grid) {
+      try { grid.focus(); } catch (_) {}
+      try {
+        grid.dispatchEvent(new MouseEvent('dblclick', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: 1,
+          clientY: 1
+        }));
+      } catch (_) {}
+      try {
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'F2',
+          code: 'F2',
+          keyCode: 113,
+          which: 113,
+          bubbles: true
+        }));
+      } catch (_) {}
+    }
+
+    const input = getSheetsCellInput();
+    if (!input) return false;
+
+    try { input.focus(); } catch (_) {}
+    try { document.execCommand('selectAll'); } catch (_) {}
+
+    const inserted = insertPlainText(input, text, input.ownerDocument || document);
+    if (!inserted) {
+      if ('value' in input && (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT')) {
+        input.value = text;
+      } else {
+        input.textContent = text;
+      }
+      try { input.dispatchEvent(new Event('input', { bubbles: true, composed: true })); } catch (_) {}
+    }
 
     try {
-      target.focus();
-      // Google Docs processes native paste on its hidden editor input.
-      return document.execCommand('paste');
-    } catch (_) {
-      return false;
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true
+      }));
+    } catch (_) {}
+
+    triggerVisualFeedback(input);
+    return true;
+  }
+
+  function getGoogleDocsEditor() {
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      let doc = null;
+      try { doc = iframe.contentDocument || iframe.contentWindow?.document; } catch (_) { continue; }
+      if (!doc) continue;
+
+      const className = iframe.className || '';
+      const editor = doc.querySelector('[contenteditable="true"], textarea, [role="textbox"]') ||
+        ((className.includes('texteventtarget') || iframe.id.includes('target')) ? (doc.body || doc.documentElement) : null);
+
+      if (editor) return { doc, editor };
     }
+    return null;
+  }
+
+  function pasteIntoGoogleDocs(text) {
+    if (!isGoogleDocsPage() && !getGoogleDocsEditor()) return false;
+
+    const found = getGoogleDocsEditor();
+    if (!found) return false;
+
+    const { doc, editor } = found;
+    const before = editor.value || editor.textContent || '';
+    const inserted = insertPlainText(editor, text, doc);
+    const after = editor.value || editor.textContent || '';
+    const success = inserted || after !== before || (after && after.includes(text));
+    if (success) triggerVisualFeedback(editor);
+    return success;
   }
 
   function triggerVisualFeedback(el) {
@@ -370,6 +486,11 @@
     return null;
   }
 
+  function markFilled(text) {
+    lastProcessedText = text;
+    lastProcessedTime = Date.now();
+  }
+
   function autofillFocusedField(text) {
     try {
       const now = Date.now();
@@ -377,40 +498,39 @@
         return { ready: true, filled: true, deduplicated: true };
       }
 
-      if (isGoogleSheetsPage() && lastSheetsSelectionAt >= lastFocusedAt) {
+      const liveTarget = getDeepActiveElement();
+      const target = (liveTarget && isEditable(liveTarget)) ? liveTarget : getTargetElement();
+
+      if (target) {
+        if (collapseExactDuplicate(target, text)) {
+          markFilled(text);
+          return { ready: true, filled: true, duplicateRemoved: true };
+        }
+
+        const success = insertTextAtCursor(target, text || '');
+        if (success) {
+          markFilled(text);
+          return { ready: true, filled: true, tagName: target.tagName };
+        }
+      }
+
+      if (isGoogleDocsPage() || getGoogleDocsEditor()) {
+        const pasted = pasteIntoGoogleDocs(text || '');
+        if (pasted) {
+          markFilled(text);
+          return { ready: true, filled: true, googleDocs: true };
+        }
+      }
+
+      if (isGoogleSheetsPage() && (lastSheetsSelectionAt || getSheetsCellInput())) {
         const pasted = pasteIntoGoogleSheets(text || '');
         if (pasted) {
-          lastProcessedText = text;
-          lastProcessedTime = now;
+          markFilled(text);
+          return { ready: true, filled: true, googleSheets: true };
         }
-        return { ready: true, filled: pasted, googleSheets: true };
       }
 
-      const target = getTargetElement();
-      if (!target) {
-        return { ready: true, filled: false, reason: 'no_input_focused' };
-      }
-
-      if (isGoogleDocsPage()) {
-        const pasted = pasteIntoGoogleDocs(target);
-        if (pasted) {
-          lastProcessedText = text;
-          lastProcessedTime = now;
-        }
-        return { ready: true, filled: pasted, googleDocs: true };
-      }
-
-      if (collapseExactDuplicate(target, text)) {
-        return { ready: true, filled: true, duplicateRemoved: true };
-      }
-
-      const success = insertTextAtCursor(target, text || '');
-      if (success) {
-        lastProcessedText = text;
-        lastProcessedTime = now;
-      }
-
-      return { ready: true, filled: success, tagName: target.tagName };
+      return { ready: true, filled: false, reason: target ? 'insert_failed' : 'no_input_focused' };
     } catch (err) {
       console.error('Autofill error in content script:', err);
       return { ready: true, filled: false, error: err.toString() };

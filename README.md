@@ -1,42 +1,43 @@
-# CopyMe - Chrome Extension (Saved Links & Clips)
+# CopyMe
 
-A minimalist Black & White Google Chrome browser extension designed to help you quickly save links, web pages, and text snippets, and **copy or auto-fill them into any web form** in just one click.
-
----
-
-## ✨ Features
-
-- ⚡ **Instant Form Auto-Fill**: Click inside any form field / input on a webpage, open the extension, and click any saved card (or the **"Auto-fill"** button) to automatically fill that input on the page!
-- 📊 **Google Sheets Paste**: Select a cell, open CopyMe, and click a saved card to paste it directly into that cell.
-- 📋 **One-Click Copy**: Always copies the content to your clipboard as well for immediate use.
-- 🌐 **Save Current Tab**: Instantly grab the current browser tab's URL and title with a single button (`+ Current Tab`).
-- ✍️ **Custom Text & Link Input**: Type or paste any snippet or URL into the input area and press `Enter` to save.
-- 📌 **Pin to Top**: Keep your most important links or snippets pinned at the top.
-- 💾 **Automatic Cloud / Local Sync**: Uses `chrome.storage.sync` to sync across your signed-in Chrome devices (with local fallback).
-- 🌓 **Black & White Minimalist Design**: High-contrast, clean aesthetic with adaptive Light and Dark modes.
-- 📦 **Backup & Restore**: Export your saved clips as JSON and import them anytime.
+A simple Chrome extension to save links and text, then fill them into any page in one click — including Google Docs, Google Sheets, and regular website forms.
 
 ---
 
-## 🚀 How to Install in Google Chrome
+## What it does
 
-1. Open Google Chrome and navigate to:
-   ```text
-   chrome://extensions
-   ```
-2. Enable **Developer mode** using the toggle switch in the top right corner.
-3. Click the **"Load unpacked"** button in the top left (or click **Reload 🔄** if already loaded).
-4. Select the project folder:
-   ```text
-   /Users/sndp/Documents/CopyMe
-   ```
-5. Click the puzzle icon (Extensions menu) in your Chrome toolbar and **pin** 📌 `CopyMe` for quick access!
+- Click inside a field or cell, then click CopyMe, then click a saved card. The text goes into that spot.
+- Works on website forms, Google Docs, Google Sheets, and most rich-text boxes.
+- Save the current tab, or type/paste your own snippet.
+- Pin important clips, export a backup, and import it later.
+- Light and dark appearance follows your computer.
 
 ---
 
-## 💡 How to Use Auto-Fill into Form Fields
+## How to install
 
-1. On any website (Google, login pages, sign-up forms, Notion, etc.), click or type inside the input field you want to fill.
-2. Click the **CopyMe** extension icon in your Chrome toolbar.
-3. Click on the saved text or link card (or the **⚡ Auto-fill** button).
-4. The text is instantly inserted into the form input on the page, with a subtle confirmation pulse and a "Auto-filled into form & copied!" alert.
+1. Open Chrome and go to `chrome://extensions`
+2. Turn on **Developer mode** (top right)
+3. Click **Load unpacked** and choose this folder:
+   `/Users/sndp/Documents/CopyMe`
+4. Pin CopyMe to the Chrome toolbar
+
+After any update, click **Reload** on the CopyMe card in `chrome://extensions`, then refresh the webpage.
+
+---
+
+## How to fill a field
+
+1. Click the box, cell, or document where the text should go.
+2. Click the **CopyMe** icon in the Chrome toolbar. A panel appears on the page — your cursor stays in place.
+3. Click a saved card (or **Auto-fill**).
+4. The text is inserted into that spot.
+
+If nothing is selected, CopyMe copies the text instead and asks you to click inside a field first.
+
+---
+
+## Tips
+
+- Click the CopyMe icon again, or press Escape, to close the panel.
+- Chrome blocks extensions on some built-in pages such as `chrome://extensions` and the Chrome Web Store.
