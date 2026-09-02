@@ -72,6 +72,18 @@
       document.referrer.includes('docs.google.com/document/');
   }
 
+  function isXPostComposer(el) {
+    if (!el || !(el instanceof Element)) return false;
+    const hostname = location.hostname.toLowerCase();
+    if (hostname !== 'x.com' && hostname !== 'twitter.com' && !hostname.endsWith('.x.com') && !hostname.endsWith('.twitter.com')) {
+      return false;
+    }
+
+    return el.matches('[data-testid^="tweetTextarea_"]') ||
+      !!el.closest('[data-testid^="tweetTextarea_"]') ||
+      (el.getAttribute('role') === 'textbox' && el.classList.contains('public-DraftEditor-content'));
+  }
+
   function isGoogleSheetsGridElement(el) {
     if (!isGoogleSheetsPage() || !el || !(el instanceof Element)) return false;
     return !!el.closest('#waffle-grid-container, .waffle-grid-container, [role="grid"]');
@@ -264,7 +276,12 @@
         } catch (_) {}
       }
 
-      let inserted = insertPlainText(targetEditor, text, doc);
+      // X uses Draft.js. Its editor can apply execCommand text once through the
+      // browser and once through Draft.js, producing an exact duplicate. Give
+      // Draft.js one paste event instead and never replay a second insertion.
+      let inserted = isXPostComposer(targetEditor)
+        ? insertIntoXPostComposer(targetEditor, text, doc)
+        : insertPlainText(targetEditor, text, doc);
       if (!inserted) {
         inserted = (targetEditor.textContent || '') !== beforeText ||
           (targetEditor.textContent || '').includes(text);
@@ -300,6 +317,27 @@
     try {
       const executed = doc.execCommand('insertText', false, text);
       return executed || contentLooksInserted(before, target, text);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function insertIntoXPostComposer(target, text, doc = document) {
+    if (!target || text === undefined || text === null) return false;
+    const win = doc.defaultView || window;
+
+    try { target.focus(); } catch (_) {}
+
+    try {
+      const clipboardData = new win.DataTransfer();
+      clipboardData.setData('text/plain', text);
+      target.dispatchEvent(new win.ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData
+      }));
+      return true;
     } catch (_) {
       return false;
     }
