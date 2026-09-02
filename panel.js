@@ -113,30 +113,26 @@
     return false;
   }
 
-  function fillNow(text) {
+  function fillNowSync(text) {
     if (typeof globalThis.__copymeAutofill === 'function') {
       const result = globalThis.__copymeAutofill(text);
-      if (result && result.filled) return Promise.resolve(true);
+      if (result && result.filled) return true;
     }
-
-    return new Promise((resolve) => {
-      try {
-        chrome.runtime.sendMessage({ action: 'autofillAllFrames', text }, (response) => {
-          if (chrome.runtime.lastError) {
-            resolve(false);
-            return;
-          }
-          resolve(!!(response && response.filled));
-        });
-      } catch (_) {
-        resolve(false);
-      }
-    });
+    return false;
   }
 
-  async function autofillAndCopy(text, btnElement = null) {
+  function fillNowLater(text) {
+    try {
+      chrome.runtime.sendMessage({ action: 'autofillAllFrames', text }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (_) {}
+  }
+
+  function autofillAndCopy(text, btnElement = null) {
     copyToClipboard(text);
-    const filled = await fillNow(text);
+    const filled = fillNowSync(text);
+    if (!filled) fillNowLater(text);
 
     if (btnElement) {
       const originalHtml = btnElement.innerHTML;
@@ -153,10 +149,29 @@
     }
 
     if (filled) {
-      showToast('Filled into the page!', '⚡');
+      showToast('Pasted at your cursor!', '⚡');
     } else {
-      showToast('Copied — click inside the field first', 'i');
+      showToast('Copied — click where you want to type, then try the card again', 'i');
     }
+  }
+
+  function bindFillAction(element, text, btnElement) {
+    element.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      if (e.target.closest && (e.target.closest('a') || (e.target.closest('button') && e.target.closest('button') !== element))) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      autofillAndCopy(text, btnElement);
+    });
+    element.addEventListener('click', (e) => {
+      if (e.target.closest && (e.target.closest('a') || (e.target.closest('button') && e.target.closest('button') !== element))) {
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+    });
   }
 
   async function saveClip(content, title = '') {
@@ -389,9 +404,15 @@
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
         </svg>
         <span>Auto-fill</span>`;
-      fillBtn.addEventListener('click', (e) => {
+      fillBtn.addEventListener('pointerdown', (e) => {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
         e.stopPropagation();
         autofillAndCopy(clip.content, fillBtn);
+      });
+      fillBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
       });
 
       const copyBtn = document.createElement('button');
@@ -411,10 +432,7 @@
 
       cardFooter.appendChild(fillBtn);
       cardFooter.appendChild(copyBtn);
-      card.addEventListener('click', (e) => {
-        if (e.target.closest('a') || e.target.closest('button')) return;
-        autofillAndCopy(clip.content, fillBtn);
-      });
+      bindFillAction(card, clip.content, fillBtn);
 
       card.appendChild(header);
       card.appendChild(contentBody);
@@ -456,7 +474,7 @@
           <div class="input-wrapper">
             <textarea id="clipInput" rows="2" placeholder="Paste or type a link / text to save..." spellcheck="false"></textarea>
             <div class="input-actions">
-              <span class="shortcut-hint">Click a card to fill</span>
+              <span class="shortcut-hint">Tap a card to paste at your cursor</span>
               <button id="addBtn" class="btn btn-primary" title="Save clip">
                 <span>Save</span>
               </button>
@@ -524,11 +542,16 @@
     wrap.innerHTML = panelHtml();
     shadow.appendChild(wrap);
 
+    host.addEventListener('pointerdown', (e) => {
+      const path = e.composedPath ? e.composedPath() : [];
+      const onField = path.some((node) => node && (node.id === 'clipInput' || node.tagName === 'TEXTAREA' || node.tagName === 'INPUT'));
+      if (!onField) e.preventDefault();
+    }, true);
     host.addEventListener('mousedown', (e) => {
       const path = e.composedPath ? e.composedPath() : [];
       const onField = path.some((node) => node && (node.id === 'clipInput' || node.tagName === 'TEXTAREA' || node.tagName === 'INPUT'));
       if (!onField) e.preventDefault();
-    });
+    }, true);
 
     document.documentElement.appendChild(host);
 

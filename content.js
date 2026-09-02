@@ -125,6 +125,17 @@
     }
   }
 
+  function snapshotActiveCursor() {
+    const active = getDeepActiveElement();
+    if (active && isEditable(active)) {
+      recordCursorPosition(active);
+      return;
+    }
+    if (isGoogleSheetsPage()) {
+      lastSheetsSelectionAt = Date.now();
+    }
+  }
+
   document.addEventListener('focusin', handleInteraction, true);
   document.addEventListener('pointerdown', handleInteraction, true);
   document.addEventListener('click', handleInteraction, true);
@@ -138,6 +149,10 @@
     const active = getDeepActiveElement();
     if (active && isEditable(active)) recordCursorPosition(active);
   });
+  document.addEventListener('focusout', (e) => {
+    if (e.target && isEditable(e.target)) recordCursorPosition(e.target);
+  }, true);
+  window.addEventListener('blur', snapshotActiveCursor, true);
 
   // Universal text insertion function - STRICT SINGLE PASS
   function insertTextAtCursor(element, text) {
@@ -245,6 +260,12 @@
     return target.textContent || '';
   }
 
+  function contentLooksInserted(before, target, text) {
+    const after = readElementText(target);
+    if (after !== before) return true;
+    return !!(text && after && after.includes(text));
+  }
+
   function insertPlainText(target, text, doc = document) {
     if (!target || text === undefined || text === null) return false;
     const view = doc.defaultView || window;
@@ -252,7 +273,27 @@
 
     try { target.focus(); } catch (_) {}
 
-    try { doc.execCommand('insertText', false, text); } catch (_) {}
+    try {
+      if (doc.execCommand('insertText', false, text) && contentLooksInserted(before, target, text)) {
+        return true;
+      }
+    } catch (_) {}
+
+    if (contentLooksInserted(before, target, text)) return true;
+
+    try {
+      const textEvent = doc.createEvent('TextEvent');
+      textEvent.initTextEvent('textInput', true, true, view, text);
+      target.dispatchEvent(textEvent);
+      if (contentLooksInserted(before, target, text)) return true;
+    } catch (_) {
+      try {
+        const ev = new Event('textInput', { bubbles: true, cancelable: true, composed: true });
+        ev.data = text;
+        target.dispatchEvent(ev);
+        if (contentLooksInserted(before, target, text)) return true;
+      } catch (_) {}
+    }
 
     try {
       target.dispatchEvent(new InputEvent('beforeinput', {
@@ -268,23 +309,8 @@
         inputType: 'insertText',
         data: text
       }));
+      if (contentLooksInserted(before, target, text)) return true;
     } catch (_) {}
-
-    try {
-      const textEvent = doc.createEvent('TextEvent');
-      textEvent.initTextEvent('textInput', true, true, view, text);
-      target.dispatchEvent(textEvent);
-    } catch (_) {
-      try {
-        const ev = new Event('textInput', { bubbles: true, cancelable: true, composed: true });
-        ev.data = text;
-        target.dispatchEvent(ev);
-      } catch (_) {}
-    }
-
-    if (readElementText(target) !== before || readElementText(target).includes(text)) {
-      return true;
-    }
 
     if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
       const orig = target.value || '';
@@ -306,7 +332,7 @@
       return true;
     }
 
-    return readElementText(target) !== before;
+    return contentLooksInserted(before, target, text);
   }
 
   function collapseExactDuplicate(element, text) {
@@ -371,69 +397,67 @@
   function pasteIntoGoogleSheets(text) {
     if (!isGoogleSheetsPage()) return false;
 
+    const input = getSheetsCellInput();
+    const active = getDeepActiveElement();
+    const editingInput = input && (
+      active === input ||
+      lastFocusedElement === input ||
+      (lastFocusedAt && lastFocusedAt >= lastSheetsSelectionAt)
+    );
+
+    if (editingInput && input) {
+      const inserted = insertPlainText(input, text, input.ownerDocument || document);
+      if (inserted) triggerVisualFeedback(input);
+      return inserted;
+    }
+
     const grid = document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]');
     if (grid) {
       try { grid.focus(); } catch (_) {}
       try {
-        grid.dispatchEvent(new MouseEvent('dblclick', {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: 1,
-          clientY: 1
-        }));
-      } catch (_) {}
-      try {
-        document.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 'F2',
-          code: 'F2',
-          keyCode: 113,
-          which: 113,
-          bubbles: true
-        }));
+        if (document.execCommand('insertText', false, text)) {
+          triggerVisualFeedback(grid);
+          return true;
+        }
       } catch (_) {}
     }
 
-    const input = getSheetsCellInput();
-    if (!input) return false;
-
-    try { input.focus(); } catch (_) {}
-    try { document.execCommand('selectAll'); } catch (_) {}
-
-    const inserted = insertPlainText(input, text, input.ownerDocument || document);
-    if (!inserted) {
-      if ('value' in input && (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT')) {
-        input.value = text;
-      } else {
-        input.textContent = text;
+    if (input) {
+      try { input.focus(); } catch (_) {}
+      try { document.execCommand('selectAll'); } catch (_) {}
+      const inserted = insertPlainText(input, text, input.ownerDocument || document);
+      if (inserted) {
+        triggerVisualFeedback(input);
+        return true;
       }
-      try { input.dispatchEvent(new Event('input', { bubbles: true, composed: true })); } catch (_) {}
     }
 
-    try {
-      input.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter',
-        code: 'Enter',
-        keyCode: 13,
-        which: 13,
-        bubbles: true
-      }));
-    } catch (_) {}
+    return false;
+  }
 
-    triggerVisualFeedback(input);
-    return true;
+  function readIframeDocument(iframe) {
+    try {
+      return iframe.contentDocument || iframe.contentWindow?.document || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function getGoogleDocsEditor() {
-    const iframes = document.querySelectorAll('iframe');
+    const preferred = document.querySelectorAll(
+      'iframe.docs-texteventtarget-iframe, .docs-texteventtarget-iframe, iframe.docs-texteventtarget-iframe iframe'
+    );
+    const iframes = preferred.length ? preferred : document.querySelectorAll('iframe');
+
     for (const iframe of iframes) {
-      let doc = null;
-      try { doc = iframe.contentDocument || iframe.contentWindow?.document; } catch (_) { continue; }
+      const doc = readIframeDocument(iframe);
       if (!doc) continue;
 
       const className = iframe.className || '';
       const editor = doc.querySelector('[contenteditable="true"], textarea, [role="textbox"]') ||
-        ((className.includes('texteventtarget') || iframe.id.includes('target')) ? (doc.body || doc.documentElement) : null);
+        ((className.includes('texteventtarget') || (iframe.id || '').includes('target'))
+          ? (doc.body || doc.documentElement)
+          : null);
 
       if (editor) return { doc, editor };
     }
@@ -538,6 +562,7 @@
   }
 
   globalThis.__copymeAutofill = autofillFocusedField;
+  globalThis.__copymeSnapshotCursor = snapshotActiveCursor;
   globalThis.__copymeGetFocus = () => ({
     ready: true,
     hasTarget: !!getTargetElement() || (isGoogleSheetsPage() && lastSheetsSelectionAt > 0),

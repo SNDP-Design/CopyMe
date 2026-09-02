@@ -25,6 +25,17 @@ async function togglePanel(tab) {
   }
 
   try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: () => {
+        if (typeof globalThis.__copymeSnapshotCursor === 'function') {
+          globalThis.__copymeSnapshotCursor();
+        }
+      }
+    });
+  } catch (_) {}
+
+  try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => typeof globalThis.__copymeAutofill === 'function'
