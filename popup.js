@@ -189,8 +189,26 @@ async function autofillAndCopy(text, btnElement = null) {
   isAutofilling = true;
 
   try {
-    // 1. Find the active page and fill it before copying. This keeps the
-    // original focused field available while the popup is still open.
+    // 1. Copy first so clipboard-based apps such as Google Sheets can paste it.
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch (err) {
+      console.error('Clipboard copy failed:', err);
+    }
+
+    // 2. Find the active page and fill the remembered field or selected cell.
     let autofilled = false;
     let noEditableField = false;
 
@@ -267,25 +285,6 @@ async function autofillAndCopy(text, btnElement = null) {
       } catch (err) {
         console.warn('Tab autofill error:', err);
       }
-    }
-
-    // 2. Copy to clipboard as a separate, reliable action.
-    let copied = false;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        copied = true;
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-        document.body.appendChild(ta);
-        ta.select();
-        copied = document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-    } catch (err) {
-      console.error('Clipboard copy failed:', err);
     }
 
     // Animate button feedback

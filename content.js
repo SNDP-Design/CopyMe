@@ -10,6 +10,7 @@
   let savedSelectionEnd = null;
   let savedRange = null;
   let lastFocusedAt = 0;
+  let lastSheetsSelectionAt = 0;
 
   // Deduplication lock
   let lastProcessedTime = 0;
@@ -42,6 +43,15 @@
 
   function isEditable(el) {
     return isInputOrTextarea(el) || isContentEditableElement(el);
+  }
+
+  function isGoogleSheetsPage() {
+    return location.hostname === 'docs.google.com' && location.pathname.includes('/spreadsheets/');
+  }
+
+  function isGoogleSheetsGridElement(el) {
+    if (!isGoogleSheetsPage() || !el || !(el instanceof Element)) return false;
+    return !!el.closest('#waffle-grid-container, .waffle-grid-container, [role="grid"]');
   }
 
   function getDeepActiveElement(root = document) {
@@ -95,6 +105,14 @@
         recordCursorPosition(el);
         return;
       }
+    }
+
+    if (path.some(isGoogleSheetsGridElement)) {
+      lastFocusedElement = null;
+      savedSelectionStart = null;
+      savedSelectionEnd = null;
+      savedRange = null;
+      lastSheetsSelectionAt = Date.now();
     }
   }
 
@@ -286,6 +304,35 @@
     return false;
   }
 
+  function pasteIntoGoogleSheets(text) {
+    if (!isGoogleSheetsPage() || !lastSheetsSelectionAt) return false;
+
+    const active = getDeepActiveElement();
+    const target = active && active !== document.body
+      ? active
+      : (document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]') || document.body);
+
+    try {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', text);
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData
+      });
+
+      if (!target.dispatchEvent(pasteEvent)) return true;
+    } catch (_) {}
+
+    try {
+      target.focus();
+      return document.execCommand('paste');
+    } catch (_) {
+      return false;
+    }
+  }
+
   function triggerVisualFeedback(el) {
     try {
       const originalOutline = el.style.outline;
@@ -324,6 +371,15 @@
         return { ready: true, filled: true, deduplicated: true };
       }
 
+      if (isGoogleSheetsPage() && lastSheetsSelectionAt >= lastFocusedAt) {
+        const pasted = pasteIntoGoogleSheets(text || '');
+        if (pasted) {
+          lastProcessedText = text;
+          lastProcessedTime = now;
+        }
+        return { ready: true, filled: pasted, googleSheets: true };
+      }
+
       const target = getTargetElement();
       if (!target) {
         return { ready: true, filled: false, reason: 'no_input_focused' };
@@ -349,8 +405,11 @@
   globalThis.__copymeAutofill = autofillFocusedField;
   globalThis.__copymeGetFocus = () => ({
     ready: true,
-    hasTarget: !!getTargetElement(),
-    focusedAt: lastFocusedAt || (isEditable(getDeepActiveElement()) ? Date.now() : 0)
+    hasTarget: !!getTargetElement() || (isGoogleSheetsPage() && lastSheetsSelectionAt > 0),
+    focusedAt: Math.max(
+      lastFocusedAt || (isEditable(getDeepActiveElement()) ? Date.now() : 0),
+      lastSheetsSelectionAt
+    )
   });
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

@@ -7,6 +7,7 @@ A minimalist Black & White Google Chrome browser extension designed to help you 
 ## ✨ Features
 
 - ⚡ **Instant Form Auto-Fill**: Click inside any form field / input on a webpage, open the extension, and click any saved card (or the **"Auto-fill"** button) to automatically fill that input on the page!
+- 📊 **Google Sheets Paste**: Select a cell, open CopyMe, and click a saved card to paste it directly into that cell.
 - 📋 **One-Click Copy**: Always copies the content to your clipboard as well for immediate use.
 - 🌐 **Save Current Tab**: Instantly grab the current browser tab's URL and title with a single button (`+ Current Tab`).
 - ✍️ **Custom Text & Link Input**: Type or paste any snippet or URL into the input area and press `Enter` to save.
