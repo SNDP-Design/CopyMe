@@ -251,7 +251,10 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'autofill') {
       const now = Date.now();
-      if (request.text === lastProcessedText && (now - lastProcessedTime < 800)) {
+      // Only deduplicate truly rapid-fire duplicate messages (same text within 400ms)
+      // This prevents double-fire if the message is somehow echoed, but allows
+      // the user to deliberately click the same card twice.
+      if (request.text === lastProcessedText && (now - lastProcessedTime < 400)) {
         sendResponse({ success: true, filled: true, deduplicated: true });
         return true;
       }
@@ -263,7 +266,7 @@
         const success = insertTextAtCursor(target, request.text || '');
         sendResponse({ success: true, filled: success, tagName: target.tagName });
       } else {
-        sendResponse({ success: false, reason: 'no_input_focused' });
+        sendResponse({ success: false, filled: false, reason: 'no_input_focused' });
       }
       return true;
     } else if (request.action === 'ping') {

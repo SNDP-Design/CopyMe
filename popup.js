@@ -164,22 +164,20 @@ async function copyToClipboard(text, btnElement = null) {
 
 // Auto-fill active webpage form field + Copy to clipboard
 async function autofillAndCopy(text, btnElement = null) {
-  // 1. Copy to clipboard
+  // 1. Copy to clipboard first
   let copied = false;
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
       copied = true;
     } else {
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      textArea.style.position = 'fixed';
-      textArea.style.opacity = '0';
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+      document.body.appendChild(ta);
+      ta.select();
       copied = document.execCommand('copy');
-      document.body.removeChild(textArea);
+      document.body.removeChild(ta);
     }
   } catch (err) {
     console.error('Clipboard copy failed:', err);
@@ -201,8 +199,9 @@ async function autofillAndCopy(text, btnElement = null) {
     }, 1500);
   }
 
-  // 2. Send a SINGLE message to the content script (always injected via manifest.json).
-  //    Do NOT use executeScript as a fallback — it would inject a second copy and cause double insertion.
+  // 2. Send message to content script. 
+  //    If it's missing (tab existed before extension was loaded/reloaded),
+  //    inject content.js as a FILE (not an inline function) then retry ONCE.
   let autofilled = false;
 
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
@@ -213,15 +212,35 @@ async function autofillAndCopy(text, btnElement = null) {
           !tab.url.startsWith('edge://') &&
           !tab.url.startsWith('chrome-extension://')) {
 
-        autofilled = await new Promise((resolve) => {
-          chrome.tabs.sendMessage(tab.id, { action: 'autofill', text: text }, (res) => {
+        // Helper: send the autofill message and wait for response
+        const sendAutofill = (tabId) => new Promise((resolve) => {
+          chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
             if (chrome.runtime.lastError || !res) {
-              resolve(false);
+              resolve({ filled: false, missing: !!chrome.runtime.lastError });
             } else {
-              resolve(res.filled === true);
+              resolve({ filled: res.filled === true, missing: false });
             }
           });
         });
+
+        let result = await sendAutofill(tab.id);
+
+        if (result.missing) {
+          // Content script not present — inject the file, then retry
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['content.js']
+            });
+            // Small delay so the listener registers before we send
+            await new Promise(r => setTimeout(r, 80));
+            result = await sendAutofill(tab.id);
+          } catch (injectErr) {
+            console.warn('Could not inject content.js:', injectErr);
+          }
+        }
+
+        autofilled = result.filled;
       }
     } catch (err) {
       console.warn('Tab autofill error:', err);
