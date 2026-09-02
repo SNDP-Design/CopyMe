@@ -53,38 +53,9 @@
       </div>
     </section>
 
-    <!-- Search and Filter Bar -->
-    <section class="filter-section">
-      <div class="search-box">
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <input type="text" id="searchInput" placeholder="Search saved clips & links..." />
-        <button id="clearSearchBtn" class="clear-search-btn" title="Clear search" style="display: none;">✕</button>
-      </div>
-
-      <div class="filter-chips">
-        <button class="chip active" data-filter="all">All</button>
-        <button class="chip" data-filter="link">🔗 Links</button>
-        <button class="chip" data-filter="text">📝 Text</button>
-      </div>
-    </section>
-
-    <!-- Autofill Helper Notice -->
-    <div class="autofill-hint">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
-      </svg>
-      <span>Click card to auto-fill form field & copy</span>
-    </div>
-
     <!-- Clips List -->
-    <main class="clips-container" id="clipsList">
-      <!-- Dynamic list items will be injected here -->
-    </main>
+    <main class="clips-container" id="clipsList"></main>
 
-    <!-- Empty State -->
     <div id="emptyState" class="empty-state" style="display: none;">
       <div class="empty-icon">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -96,12 +67,6 @@
       </div>
       <p class="empty-title">No clips saved yet</p>
       <p class="empty-desc">Type in the box above or click <strong>"+ Current Tab"</strong> to save links you want to copy or auto-fill.</p>
-    </div>
-
-    <!-- No Search Results State -->
-    <div id="noResultsState" class="empty-state" style="display: none;">
-      <p class="empty-title">No matching clips found</p>
-      <p class="empty-desc">Try searching for a different keyword.</p>
     </div>
 
     <!-- Footer Actions -->

@@ -10,7 +10,6 @@ A minimalist Black & White Google Chrome browser extension designed to help you 
 - 📋 **One-Click Copy**: Always copies the content to your clipboard as well for immediate use.
 - 🌐 **Save Current Tab**: Instantly grab the current browser tab's URL and title with a single button (`+ Current Tab`).
 - ✍️ **Custom Text & Link Input**: Type or paste any snippet or URL into the input area and press `Enter` to save.
-- 🔍 **Instant Search & Filter**: Real-time search by keyword and filter by `Links` or `Text`.
 - 📌 **Pin to Top**: Keep your most important links or snippets pinned at the top.
 - 💾 **Automatic Cloud / Local Sync**: Uses `chrome.storage.sync` to sync across your signed-in Chrome devices (with local fallback).
 - 🌓 **Black & White Minimalist Design**: High-contrast, clean aesthetic with adaptive Light and Dark modes.

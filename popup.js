@@ -5,20 +5,14 @@
 
 // State
 let clips = [];
-let currentFilter = 'all';
-let currentSearch = '';
 let toastTimeout = null;
 
 // DOM Elements
 const clipInput = document.getElementById('clipInput');
 const addBtn = document.getElementById('addBtn');
 const saveTabBtn = document.getElementById('saveTabBtn');
-const searchInput = document.getElementById('searchInput');
-const clearSearchBtn = document.getElementById('clearSearchBtn');
-const filterChips = document.querySelectorAll('.filter-chips .chip');
 const clipsList = document.getElementById('clipsList');
 const emptyState = document.getElementById('emptyState');
-const noResultsState = document.getElementById('noResultsState');
 const itemCount = document.getElementById('itemCount');
 const clearAllBtn = document.getElementById('clearAllBtn');
 const exportBtn = document.getElementById('exportBtn');
@@ -434,54 +428,31 @@ function handleImportFile(event) {
   event.target.value = '';
 }
 
-// Render clips list based on current filters and search
+// Render clips list
 function render() {
   itemCount.textContent = `${clips.length} ${clips.length === 1 ? 'item' : 'items'}`;
 
-  // Filter and Search logic
-  let filtered = clips.filter(clip => {
-    if (currentFilter !== 'all' && clip.type !== currentFilter) {
-      return false;
-    }
-    if (currentSearch) {
-      const q = currentSearch.toLowerCase();
-      const contentMatch = clip.content && clip.content.toLowerCase().includes(q);
-      const titleMatch = clip.title && clip.title.toLowerCase().includes(q);
-      return contentMatch || titleMatch;
-    }
-    return true;
-  });
-
   // Sort: Pinned first, then by createdAt descending
-  filtered.sort((a, b) => {
+  const sortedClips = [...clips].sort((a, b) => {
     if (a.pinned === b.pinned) {
       return (b.createdAt || 0) - (a.createdAt || 0);
     }
     return a.pinned ? -1 : 1;
   });
 
-  // Handle empty states
-  if (clips.length === 0) {
+  // Handle empty state
+  if (sortedClips.length === 0) {
     emptyState.style.display = 'flex';
-    noResultsState.style.display = 'none';
-    clipsList.innerHTML = '';
-    return;
-  }
-
-  if (filtered.length === 0) {
-    emptyState.style.display = 'none';
-    noResultsState.style.display = 'flex';
     clipsList.innerHTML = '';
     return;
   }
 
   emptyState.style.display = 'none';
-  noResultsState.style.display = 'none';
 
   // Build card elements
   clipsList.innerHTML = '';
   
-  filtered.forEach(clip => {
+  sortedClips.forEach(clip => {
     const card = document.createElement('div');
     card.className = `clip-card ${clip.pinned ? 'pinned' : ''}`;
     card.title = "Click to auto-fill into active form field & copy";
@@ -645,32 +616,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Save Current Tab Button Click
   saveTabBtn.addEventListener('click', saveCurrentTab);
-
-  // Search input handler
-  searchInput.addEventListener('input', (e) => {
-    currentSearch = e.target.value.trim();
-    clearSearchBtn.style.display = currentSearch ? 'block' : 'none';
-    render();
-  });
-
-  // Clear search button
-  clearSearchBtn.addEventListener('click', () => {
-    searchInput.value = '';
-    currentSearch = '';
-    clearSearchBtn.style.display = 'none';
-    searchInput.focus();
-    render();
-  });
-
-  // Filter chips
-  filterChips.forEach(chip => {
-    chip.addEventListener('click', () => {
-      filterChips.forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      currentFilter = chip.dataset.filter;
-      render();
-    });
-  });
 
   // Clear all button
   clearAllBtn.addEventListener('click', clearAllClips);
