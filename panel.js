@@ -113,45 +113,59 @@
     return false;
   }
 
-  function fillNowSync(text) {
-    if (typeof globalThis.__copymeAutofill === 'function') {
-      const result = globalThis.__copymeAutofill(text);
-      if (result && result.filled) return true;
-    }
-    return false;
+  function fillNowAsync(text) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: 'autofillAllFrames', text }, (res) => {
+          if (chrome.runtime.lastError || !res) {
+            resolve(false);
+          } else {
+            resolve(res.filled === true);
+          }
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
   }
 
-  function fillNowLater(text) {
+  let isAutofilling = false;
+
+  async function autofillAndCopy(text, btnElement = null) {
+    if (isAutofilling) return;
+    isAutofilling = true;
+
     try {
-      chrome.runtime.sendMessage({ action: 'autofillAllFrames', text }, () => {
-        void chrome.runtime.lastError;
-      });
-    } catch (_) {}
-  }
+      await copyToClipboard(text);
+      const filled = await fillNowAsync(text);
 
-  function autofillAndCopy(text, btnElement = null) {
-    copyToClipboard(text);
-    const filled = fillNowSync(text);
-    if (!filled) fillNowLater(text);
-
-    if (btnElement) {
-      const originalHtml = btnElement.innerHTML;
-      btnElement.classList.add('copied');
-      btnElement.innerHTML = filled
-        ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Done!</span>`
-        : originalHtml;
-      if (filled) {
+      if (btnElement) {
+        const originalHtml = btnElement.innerHTML;
+        btnElement.classList.add('copied');
+        btnElement.innerHTML = `
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+          <span>Done!</span>
+        `;
         setTimeout(() => {
           btnElement.classList.remove('copied');
           btnElement.innerHTML = originalHtml;
         }, 1500);
       }
-    }
 
-    if (filled) {
-      showToast('Pasted at your cursor!', '⚡');
-    } else {
-      showToast('Copied — click where you want to type, then try the card again', 'i');
+      if (filled) {
+        showToast('Pasted at your cursor!', '⚡');
+        setTimeout(() => {
+          hidePanel();
+        }, 700);
+      } else {
+        showToast('Copied to clipboard!', '✓');
+      }
+    } finally {
+      setTimeout(() => {
+        isAutofilling = false;
+      }, 600);
     }
   }
 
@@ -605,6 +619,8 @@
       return;
     }
     await mountPanel();
+    clips = await storage.get('clips');
+    render();
     if (host) host.style.display = 'block';
   };
 })();

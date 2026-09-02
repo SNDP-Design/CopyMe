@@ -255,13 +255,24 @@ async function autofillAndCopy(text, btnElement = null) {
               .filter(frame => frame.result.hasTarget === true)
               .sort((a, b) => b.result.focusedAt - a.result.focusedAt)[0];
 
-            if (!targetFrame) return { filled: false, missing: false };
-
-            frameResults = await chrome.scripting.executeScript({
-              target: { tabId, frameIds: [targetFrame.frameId] },
-              func: (value) => globalThis.__copymeAutofill(value),
-              args: [text]
-            });
+            if (targetFrame) {
+              frameResults = await chrome.scripting.executeScript({
+                target: { tabId, frameIds: [targetFrame.frameId] },
+                func: (value) => globalThis.__copymeAutofill(value),
+                args: [text]
+              });
+            } else {
+              frameResults = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: (value) => {
+                  if (typeof globalThis.__copymeAutofill === 'function') {
+                    return globalThis.__copymeAutofill(value);
+                  }
+                  return { filled: false };
+                },
+                args: [text]
+              });
+            }
 
             return { filled: frameResults.some(frame => frame.result && frame.result.filled === true), missing: false };
           };

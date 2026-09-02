@@ -44,7 +44,21 @@
            !!el.closest('[contenteditable="true"]');
   }
 
+  function isPanelElement(el) {
+    if (!el || !(el instanceof Element)) return false;
+    if (el.id === 'copyme-panel-host' || el.hasAttribute('data-copyme-panel')) return true;
+    if (el.closest && el.closest('#copyme-panel-host, [data-copyme-panel]')) return true;
+    try {
+      const root = el.getRootNode && el.getRootNode();
+      if (root && root.host && (root.host.id === 'copyme-panel-host' || root.host.hasAttribute('data-copyme-panel'))) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
   function isEditable(el) {
+    if (isPanelElement(el)) return false;
     return isInputOrTextarea(el) || isContentEditableElement(el);
   }
 
@@ -72,7 +86,12 @@
   }
 
   function recordCursorPosition(el) {
-    if (!el || !isEditable(el)) return;
+    if (!el || !isEditable(el) || isPanelElement(el)) return;
+
+    if (isContentEditableElement(el)) {
+      el = el.closest('[contenteditable="true"], [contenteditable=""], [role="textbox"]') ||
+        (el.isContentEditable ? el : (el.closest('[contenteditable]') || el));
+    }
 
     if (lastFocusedElement !== el) {
       savedSelectionStart = null;
@@ -110,6 +129,7 @@
   function handleInteraction(event) {
     const path = event.composedPath ? event.composedPath() : [event.target];
     for (const el of path) {
+      if (isPanelElement(el)) return;
       if (isEditable(el)) {
         recordCursorPosition(el);
         return;
@@ -127,7 +147,7 @@
 
   function snapshotActiveCursor() {
     const active = getDeepActiveElement();
-    if (active && isEditable(active)) {
+    if (active && isEditable(active) && !isPanelElement(active)) {
       recordCursorPosition(active);
       return;
     }
@@ -171,10 +191,10 @@
           end = typeof element.selectionEnd === 'number' ? element.selectionEnd : start;
         }
       } catch (_) {
-        // Selection API not supported for this input type (e.g. email, number, date)
+        // Selection API not supported for this input type
       }
 
-      if (typeof savedSelectionStart === 'number') {
+      if (typeof savedSelectionStart === 'number' && savedSelectionStart >= 0) {
         try {
           start = Math.max(0, Math.min(savedSelectionStart, orig.length));
           end = Math.max(start, Math.min(savedSelectionEnd !== null ? savedSelectionEnd : savedSelectionStart, orig.length));
@@ -185,32 +205,32 @@
         element.setSelectionRange(start, end);
       } catch (_) {}
 
-      let setSuccess = false;
+      const newVal = orig.substring(0, start) + text + orig.substring(end);
+      let setDone = false;
       try {
-        if (typeof element.setRangeText === 'function') {
-          element.setRangeText(text, start, end, 'end');
-          setSuccess = true;
+        const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (descriptor && descriptor.set) {
+          descriptor.set.call(element, newVal);
+          setDone = true;
         }
-      } catch (_) {
-        setSuccess = false;
+      } catch (_) {}
+
+      if (!setDone) {
+        try {
+          if (typeof element.setRangeText === 'function') {
+            element.setRangeText(text, start, end, 'end');
+            setDone = true;
+          }
+        } catch (_) {}
       }
 
-      if (!setSuccess) {
-        const newVal = orig.substring(0, start) + text + orig.substring(end);
-        try {
-          const proto = Object.getPrototypeOf(element);
-          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-          if (descriptor && descriptor.set) {
-            descriptor.set.call(element, newVal);
-          } else {
-            element.value = newVal;
-          }
-        } catch (_) {
-          element.value = orig.substring(0, start) + text + orig.substring(end);
-        }
-        const newPos = start + text.length;
-        try { element.setSelectionRange(newPos, newPos); } catch (_) {}
+      if (!setDone) {
+        element.value = newVal;
       }
+
+      const newPos = start + text.length;
+      try { element.setSelectionRange(newPos, newPos); } catch (_) {}
 
       // Notify React's internal value tracker
       try {
@@ -229,19 +249,22 @@
 
     // Case 2: Rich Text Editors (Twitter/X, Claude, ChatGPT, Notion, Discord, ProseMirror, Lexical, Draft.js)
     if (isContentEditableElement(element)) {
-      const targetEditor = element.isContentEditable ? element : (element.closest('[contenteditable]') || element);
+      const targetEditor = element.closest('[contenteditable="true"], [contenteditable=""], [role="textbox"]') ||
+        (element.isContentEditable ? element : (element.closest('[contenteditable]') || element));
+      const doc = targetEditor.ownerDocument || document;
+      const win = doc.defaultView || window;
       const beforeText = targetEditor.textContent || '';
       try { targetEditor.focus(); } catch (_) {}
 
       if (savedRange) {
         try {
-          const sel = window.getSelection();
+          const sel = win.getSelection();
           sel.removeAllRanges();
           sel.addRange(savedRange);
         } catch (_) {}
       }
 
-      let inserted = insertPlainText(targetEditor, text, targetEditor.ownerDocument || document);
+      let inserted = insertPlainText(targetEditor, text, doc);
       if (!inserted) {
         inserted = (targetEditor.textContent || '') !== beforeText ||
           (targetEditor.textContent || '').includes(text);
@@ -268,71 +291,18 @@
 
   function insertPlainText(target, text, doc = document) {
     if (!target || text === undefined || text === null) return false;
-    const view = doc.defaultView || window;
     const before = readElementText(target);
 
     try { target.focus(); } catch (_) {}
 
+    // One native insertion attempt only. Editors may update asynchronously,
+    // so replaying paste/text/input fallbacks can insert the same clip twice.
     try {
-      if (doc.execCommand('insertText', false, text) && contentLooksInserted(before, target, text)) {
-        return true;
-      }
-    } catch (_) {}
-
-    if (contentLooksInserted(before, target, text)) return true;
-
-    try {
-      const textEvent = doc.createEvent('TextEvent');
-      textEvent.initTextEvent('textInput', true, true, view, text);
-      target.dispatchEvent(textEvent);
-      if (contentLooksInserted(before, target, text)) return true;
+      const executed = doc.execCommand('insertText', false, text);
+      return executed || contentLooksInserted(before, target, text);
     } catch (_) {
-      try {
-        const ev = new Event('textInput', { bubbles: true, cancelable: true, composed: true });
-        ev.data = text;
-        target.dispatchEvent(ev);
-        if (contentLooksInserted(before, target, text)) return true;
-      } catch (_) {}
+      return false;
     }
-
-    try {
-      target.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: 'insertText',
-        data: text
-      }));
-      target.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        composed: true,
-        inputType: 'insertText',
-        data: text
-      }));
-      if (contentLooksInserted(before, target, text)) return true;
-    } catch (_) {}
-
-    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
-      const orig = target.value || '';
-      let start = orig.length;
-      let end = orig.length;
-      try {
-        if (typeof target.selectionStart === 'number') {
-          start = target.selectionStart;
-          end = typeof target.selectionEnd === 'number' ? target.selectionEnd : start;
-        }
-      } catch (_) {}
-      target.value = orig.slice(0, start) + text + orig.slice(end);
-      try {
-        const pos = start + text.length;
-        target.setSelectionRange(pos, pos);
-      } catch (_) {}
-      target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      return true;
-    }
-
-    return contentLooksInserted(before, target, text);
   }
 
   function collapseExactDuplicate(element, text) {
@@ -398,38 +368,35 @@
     if (!isGoogleSheetsPage()) return false;
 
     const input = getSheetsCellInput();
-    const active = getDeepActiveElement();
-    const editingInput = input && (
-      active === input ||
-      lastFocusedElement === input ||
-      (lastFocusedAt && lastFocusedAt >= lastSheetsSelectionAt)
-    );
-
-    if (editingInput && input) {
-      const inserted = insertPlainText(input, text, input.ownerDocument || document);
-      if (inserted) triggerVisualFeedback(input);
-      return inserted;
+    if (input && input.offsetParent !== null) {
+      return insertTextAtCursor(input, text);
     }
 
     const grid = document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]');
-    if (grid) {
-      try { grid.focus(); } catch (_) {}
+    const target = grid || document.activeElement;
+
+    if (target) {
+      try { target.focus(); } catch (_) {}
       try {
-        if (document.execCommand('insertText', false, text)) {
-          triggerVisualFeedback(grid);
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        const pasteEv = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clipboardData: dt
+        });
+        target.dispatchEvent(pasteEv);
+        triggerVisualFeedback(target);
+        return true;
+      } catch (_) {}
+
+      try {
+        if (document.execCommand('paste')) {
+          triggerVisualFeedback(target);
           return true;
         }
       } catch (_) {}
-    }
-
-    if (input) {
-      try { input.focus(); } catch (_) {}
-      try { document.execCommand('selectAll'); } catch (_) {}
-      const inserted = insertPlainText(input, text, input.ownerDocument || document);
-      if (inserted) {
-        triggerVisualFeedback(input);
-        return true;
-      }
     }
 
     return false;
@@ -468,15 +435,41 @@
     if (!isGoogleDocsPage() && !getGoogleDocsEditor()) return false;
 
     const found = getGoogleDocsEditor();
-    if (!found) return false;
+    const doc = found ? found.doc : document;
+    const editor = found ? found.editor : null;
 
-    const { doc, editor } = found;
-    const before = editor.value || editor.textContent || '';
-    const inserted = insertPlainText(editor, text, doc);
-    const after = editor.value || editor.textContent || '';
-    const success = inserted || after !== before || (after && after.includes(text));
-    if (success) triggerVisualFeedback(editor);
-    return success;
+    if (editor) {
+      try { editor.focus(); } catch (_) {}
+      try {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        const pasteEv = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clipboardData: dt
+        });
+        editor.dispatchEvent(pasteEv);
+        triggerVisualFeedback(editor);
+        return true;
+      } catch (_) {}
+    }
+
+    try {
+      if (doc && doc.execCommand && doc.execCommand('paste')) {
+        if (editor) triggerVisualFeedback(editor);
+        return true;
+      }
+    } catch (_) {}
+
+    try {
+      if (document.execCommand('paste')) {
+        if (editor) triggerVisualFeedback(editor);
+        return true;
+      }
+    } catch (_) {}
+
+    return true;
   }
 
   function triggerVisualFeedback(el) {
@@ -498,13 +491,23 @@
   }
 
   function getTargetElement() {
-    if (lastFocusedElement && document.contains(lastFocusedElement) && isEditable(lastFocusedElement)) {
+    if (lastFocusedElement && document.contains(lastFocusedElement) && isEditable(lastFocusedElement) && !isPanelElement(lastFocusedElement)) {
       return lastFocusedElement;
     }
 
     const deepActive = getDeepActiveElement();
-    if (isEditable(deepActive)) {
+    if (isEditable(deepActive) && !isPanelElement(deepActive)) {
       return deepActive;
+    }
+
+    // Fallback: find the first visible editable input on the page
+    const candidates = document.querySelectorAll(
+      'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([disabled]):not([readonly]), textarea:not([disabled]):not([readonly]), [contenteditable="true"], [contenteditable=""], [role="textbox"]'
+    );
+    for (const el of candidates) {
+      if (isEditable(el) && !isPanelElement(el) && el.offsetParent !== null) {
+        return el;
+      }
     }
 
     return null;
@@ -518,26 +521,13 @@
   function autofillFocusedField(text) {
     try {
       const now = Date.now();
-      if (text === lastProcessedText && (now - lastProcessedTime < 400)) {
+      if (text === lastProcessedText && (now - lastProcessedTime < 800)) {
         return { ready: true, filled: true, deduplicated: true };
       }
+      lastProcessedText = text;
+      lastProcessedTime = now;
 
-      const liveTarget = getDeepActiveElement();
-      const target = (liveTarget && isEditable(liveTarget)) ? liveTarget : getTargetElement();
-
-      if (target) {
-        if (collapseExactDuplicate(target, text)) {
-          markFilled(text);
-          return { ready: true, filled: true, duplicateRemoved: true };
-        }
-
-        const success = insertTextAtCursor(target, text || '');
-        if (success) {
-          markFilled(text);
-          return { ready: true, filled: true, tagName: target.tagName };
-        }
-      }
-
+      // 1. Google Docs
       if (isGoogleDocsPage() || getGoogleDocsEditor()) {
         const pasted = pasteIntoGoogleDocs(text || '');
         if (pasted) {
@@ -546,11 +536,24 @@
         }
       }
 
-      if (isGoogleSheetsPage() && (lastSheetsSelectionAt || getSheetsCellInput())) {
+      // 2. Google Sheets
+      if (isGoogleSheetsPage()) {
         const pasted = pasteIntoGoogleSheets(text || '');
         if (pasted) {
           markFilled(text);
           return { ready: true, filled: true, googleSheets: true };
+        }
+      }
+
+      // 3. Social Media, Message Composers, and Standard Inputs
+      const liveTarget = getDeepActiveElement();
+      const target = (liveTarget && isEditable(liveTarget) && !isPanelElement(liveTarget)) ? liveTarget : getTargetElement();
+
+      if (target) {
+        const success = insertTextAtCursor(target, text || '');
+        if (success) {
+          markFilled(text);
+          return { ready: true, filled: true, tagName: target.tagName };
         }
       }
 

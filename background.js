@@ -106,6 +106,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const frameResults = await chrome.scripting.executeScript({
           target: { tabId, allFrames: true },
+          func: () => {
+            if (typeof globalThis.__copymeGetFocus !== 'function') {
+              return { ready: false, hasTarget: false, focusedAt: 0 };
+            }
+            return globalThis.__copymeGetFocus();
+          }
+        });
+
+        const readyFrames = frameResults.filter((frame) => frame.result && frame.result.ready === true);
+        const targetFrame = readyFrames
+          .filter((frame) => frame.result.hasTarget === true)
+          .sort((a, b) => b.result.focusedAt - a.result.focusedAt)[0] || readyFrames[0];
+
+        if (!targetFrame) {
+          sendResponse({ filled: false });
+          return;
+        }
+
+        const fillResults = await chrome.scripting.executeScript({
+          target: { tabId, frameIds: [targetFrame.frameId] },
           func: (value) => {
             if (typeof globalThis.__copymeAutofill !== 'function') {
               return { filled: false };
@@ -114,8 +134,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           },
           args: [request.text || '']
         });
+
         sendResponse({
-          filled: frameResults.some((frame) => frame.result && frame.result.filled === true)
+          filled: fillResults.some((frame) => frame.result && frame.result.filled === true)
         });
       } catch (_) {
         sendResponse({ filled: false });
