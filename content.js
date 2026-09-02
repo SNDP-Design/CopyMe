@@ -103,7 +103,7 @@
     if (active && isEditable(active)) recordCursorPosition(active);
   });
 
-  // Universal text insertion function
+  // Universal text insertion function - STRICT SINGLE PASS
   function insertTextAtCursor(element, text) {
     if (!element || text === undefined || text === null) return false;
 
@@ -114,41 +114,50 @@
       let start = typeof element.selectionStart === 'number' ? element.selectionStart : orig.length;
       let end = typeof element.selectionEnd === 'number' ? element.selectionEnd : orig.length;
 
-      if (typeof savedSelectionStart === 'number' && (start === null || isNaN(start))) {
-        start = savedSelectionStart;
-        end = savedSelectionEnd !== null ? savedSelectionEnd : savedSelectionStart;
+      if (typeof savedSelectionStart === 'number') {
+        start = Math.max(0, Math.min(savedSelectionStart, orig.length));
+        end = Math.max(start, Math.min(savedSelectionEnd !== null ? savedSelectionEnd : savedSelectionStart, orig.length));
       }
 
-      start = Math.max(0, Math.min(start, orig.length));
-      end = Math.max(start, Math.min(end, orig.length));
-
-      // Native browser range text replacement
-      if (typeof element.setRangeText === 'function') {
-        element.setRangeText(text, start, end, 'end');
-      } else {
-        const newVal = orig.substring(0, start) + text + orig.substring(end);
-        const proto = Object.getPrototypeOf(element);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (descriptor && descriptor.set) {
-          descriptor.set.call(element, newVal);
-        } else {
-          element.value = newVal;
-        }
-        const newPos = start + text.length;
-        try { element.setSelectionRange(newPos, newPos); } catch (_) {}
-      }
-
-      // React 16+ descriptor call
       try {
-        const proto = Object.getPrototypeOf(element);
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-        if (descriptor && descriptor.set) {
-          descriptor.set.call(element, element.value);
-        }
+        element.setSelectionRange(start, end);
       } catch (_) {}
 
-      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      // Single-pass execCommand: updates undo stack and triggers native input events
+      let inserted = false;
+      try {
+        inserted = document.execCommand('insertText', false, text);
+      } catch (_) {
+        inserted = false;
+      }
+
+      // Only run fallback if execCommand did NOT modify the value
+      if (!inserted || element.value === orig) {
+        if (typeof element.setRangeText === 'function') {
+          element.setRangeText(text, start, end, 'end');
+        } else {
+          const newVal = orig.substring(0, start) + text + orig.substring(end);
+          const proto = Object.getPrototypeOf(element);
+          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+          if (descriptor && descriptor.set) {
+            descriptor.set.call(element, newVal);
+          } else {
+            element.value = newVal;
+          }
+          const newPos = start + text.length;
+          try { element.setSelectionRange(newPos, newPos); } catch (_) {}
+        }
+
+        // Notify React's internal value tracker
+        const tracker = element._valueTracker;
+        if (tracker) {
+          tracker.setValue(orig);
+        }
+
+        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      }
+
       triggerVisualFeedback(element);
       return true;
     }
@@ -166,14 +175,13 @@
         } catch (_) {}
       }
 
-      // 1. Try native execCommand insertText (safest for rich text editors)
-      let success = false;
+      // Single-pass native insertText ONLY:
+      // execCommand naturally triggers Blink's native beforeinput/input events which the editor processes.
+      // NEVER dispatch secondary beforeinput or paste events when execCommand runs, as that creates duplicate insertion.
       try {
-        success = document.execCommand('insertText', false, text);
-      } catch (_) {}
-
-      // 2. Try modern InputEvent ('insertText')
-      if (!success) {
+        document.execCommand('insertText', false, text);
+      } catch (_) {
+        // Only if execCommand threw an exception:
         try {
           const inputEv = new InputEvent('beforeinput', {
             bubbles: true,
@@ -182,27 +190,9 @@
             data: text
           });
           targetEditor.dispatchEvent(inputEv);
-          success = true;
         } catch (_) {}
       }
 
-      // 3. Try ClipboardEvent paste
-      if (!success) {
-        try {
-          const dt = new DataTransfer();
-          dt.setData('text/plain', text);
-          const pasteEv = new ClipboardEvent('paste', {
-            bubbles: true,
-            cancelable: true,
-            clipboardData: dt
-          });
-          targetEditor.dispatchEvent(pasteEv);
-          success = true;
-        } catch (_) {}
-      }
-
-      targetEditor.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      targetEditor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       triggerVisualFeedback(targetEditor);
       return true;
     }

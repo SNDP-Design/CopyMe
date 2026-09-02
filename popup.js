@@ -162,98 +162,106 @@ async function copyToClipboard(text, btnElement = null) {
   }
 }
 
+let isAutofilling = false;
+
 // Auto-fill active webpage form field + Copy to clipboard
 async function autofillAndCopy(text, btnElement = null) {
-  // 1. Copy to clipboard first
-  let copied = false;
+  if (isAutofilling) return;
+  isAutofilling = true;
+
   try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-      document.body.appendChild(ta);
-      ta.select();
-      copied = document.execCommand('copy');
-      document.body.removeChild(ta);
-    }
-  } catch (err) {
-    console.error('Clipboard copy failed:', err);
-  }
-
-  // Animate button feedback
-  if (btnElement) {
-    const originalHtml = btnElement.innerHTML;
-    btnElement.classList.add('copied');
-    btnElement.innerHTML = `
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="20 6 9 17 4 12"></polyline>
-      </svg>
-      <span>Done!</span>
-    `;
-    setTimeout(() => {
-      btnElement.classList.remove('copied');
-      btnElement.innerHTML = originalHtml;
-    }, 1500);
-  }
-
-  // 2. Send message to content script. 
-  //    If it's missing (tab existed before extension was loaded/reloaded),
-  //    inject content.js as a FILE (not an inline function) then retry ONCE.
-  let autofilled = false;
-
-  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+    // 1. Copy to clipboard first
+    let copied = false;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id && tab.url &&
-          !tab.url.startsWith('chrome://') &&
-          !tab.url.startsWith('edge://') &&
-          !tab.url.startsWith('chrome-extension://')) {
-
-        // Helper: send the autofill message and wait for response
-        const sendAutofill = (tabId) => new Promise((resolve) => {
-          chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
-            if (chrome.runtime.lastError || !res) {
-              resolve({ filled: false, missing: !!chrome.runtime.lastError });
-            } else {
-              resolve({ filled: res.filled === true, missing: false });
-            }
-          });
-        });
-
-        let result = await sendAutofill(tab.id);
-
-        if (result.missing) {
-          // Content script not present — inject the file, then retry
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              files: ['content.js']
-            });
-            // Small delay so the listener registers before we send
-            await new Promise(r => setTimeout(r, 80));
-            result = await sendAutofill(tab.id);
-          } catch (injectErr) {
-            console.warn('Could not inject content.js:', injectErr);
-          }
-        }
-
-        autofilled = result.filled;
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
       }
     } catch (err) {
-      console.warn('Tab autofill error:', err);
+      console.error('Clipboard copy failed:', err);
     }
-  }
 
-  // Toast feedback
-  if (autofilled) {
-    showToast('Auto-filled into form & copied!', '⚡');
-  } else if (copied) {
-    showToast('Copied to clipboard!', '✓');
-  } else {
-    showToast('Failed to copy', '✕');
+    // Animate button feedback
+    if (btnElement) {
+      const originalHtml = btnElement.innerHTML;
+      btnElement.classList.add('copied');
+      btnElement.innerHTML = `
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span>Done!</span>
+      `;
+      setTimeout(() => {
+        btnElement.classList.remove('copied');
+        btnElement.innerHTML = originalHtml;
+      }, 1500);
+    }
+
+    // 2. Send message to content script
+    let autofilled = false;
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.id && tab.url &&
+            !tab.url.startsWith('chrome://') &&
+            !tab.url.startsWith('edge://') &&
+            !tab.url.startsWith('chrome-extension://')) {
+
+          // Helper: send the autofill message and wait for response
+          const sendAutofill = (tabId) => new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
+              if (chrome.runtime.lastError || !res) {
+                resolve({ filled: false, missing: !!chrome.runtime.lastError });
+              } else {
+                resolve({ filled: res.filled === true, missing: false });
+              }
+            });
+          });
+
+          let result = await sendAutofill(tab.id);
+
+          if (result.missing) {
+            // Content script not present — inject the file, then retry
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ['content.js']
+              });
+              await new Promise(r => setTimeout(r, 100));
+              result = await sendAutofill(tab.id);
+            } catch (injectErr) {
+              console.warn('Could not inject content.js:', injectErr);
+            }
+          }
+
+          autofilled = result.filled;
+        }
+      } catch (err) {
+        console.warn('Tab autofill error:', err);
+      }
+    }
+
+    // Toast feedback
+    if (autofilled) {
+      showToast('Auto-filled into form & copied!', '⚡');
+    } else if (copied) {
+      showToast('Copied to clipboard!', '✓');
+    } else {
+      showToast('Failed to copy', '✕');
+    }
+  } finally {
+    setTimeout(() => {
+      isAutofilling = false;
+    }, 400);
   }
 }
 
