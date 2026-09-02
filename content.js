@@ -123,40 +123,30 @@
         element.setSelectionRange(start, end);
       } catch (_) {}
 
-      // Single-pass execCommand: updates undo stack and triggers native input events
-      let inserted = false;
-      try {
-        inserted = document.execCommand('insertText', false, text);
-      } catch (_) {
-        inserted = false;
-      }
-
-      // Only run fallback if execCommand did NOT modify the value
-      if (!inserted || element.value === orig) {
-        if (typeof element.setRangeText === 'function') {
-          element.setRangeText(text, start, end, 'end');
+      if (typeof element.setRangeText === 'function') {
+        element.setRangeText(text, start, end, 'end');
+      } else {
+        const newVal = orig.substring(0, start) + text + orig.substring(end);
+        // Using native setter for React 16+ compatibility if needed
+        const proto = Object.getPrototypeOf(element);
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+        if (descriptor && descriptor.set) {
+          descriptor.set.call(element, newVal);
         } else {
-          const newVal = orig.substring(0, start) + text + orig.substring(end);
-          const proto = Object.getPrototypeOf(element);
-          const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-          if (descriptor && descriptor.set) {
-            descriptor.set.call(element, newVal);
-          } else {
-            element.value = newVal;
-          }
-          const newPos = start + text.length;
-          try { element.setSelectionRange(newPos, newPos); } catch (_) {}
+          element.value = newVal;
         }
-
-        // Notify React's internal value tracker
-        const tracker = element._valueTracker;
-        if (tracker) {
-          tracker.setValue(orig);
-        }
-
-        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        const newPos = start + text.length;
+        try { element.setSelectionRange(newPos, newPos); } catch (_) {}
       }
+
+      // Notify React's internal value tracker
+      const tracker = element._valueTracker;
+      if (tracker) {
+        tracker.setValue(orig);
+      }
+
+      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 
       triggerVisualFeedback(element);
       return true;
