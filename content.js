@@ -201,10 +201,11 @@
       // Single-pass native insertText ONLY:
       let inserted = false;
       try {
-        inserted = document.execCommand('insertText', false, text);
-      } catch (_) {}
-
-      if (!inserted) {
+        // Some editors insert successfully but return false from execCommand.
+        // Treat the command as one insertion so the fallback cannot duplicate it.
+        document.execCommand('insertText', false, text);
+        inserted = true;
+      } catch (_) {
         try {
           const selection = window.getSelection();
           const range = selection && selection.rangeCount > 0
