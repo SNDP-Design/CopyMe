@@ -195,7 +195,65 @@ async function autofillAndCopy(text, btnElement = null) {
   isAutofilling = true;
 
   try {
-    // 1. Copy to clipboard first
+    // 1. Find the active page and fill it before copying. This keeps the
+    // original focused field available while the popup is still open.
+    let autofilled = false;
+    let noEditableField = false;
+
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      try {
+        let tab = null;
+        const tabQueries = [
+          { active: true, lastFocusedWindow: true },
+          { active: true, currentWindow: true }
+        ];
+
+        for (const query of tabQueries) {
+          try {
+            const tabs = await chrome.tabs.query(query);
+            if (tabs && tabs.length > 0) {
+              tab = tabs[0];
+              break;
+            }
+          } catch (_) {}
+        }
+
+        if (tab && tab.id !== undefined && tab.url &&
+            !tab.url.startsWith('chrome://') &&
+            !tab.url.startsWith('edge://') &&
+            !tab.url.startsWith('chrome-extension://')) {
+          const sendAutofill = (tabId) => new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
+              if (chrome.runtime.lastError || !res) {
+                resolve({ filled: false, missing: true });
+              } else {
+                resolve({ filled: res.filled === true, missing: false });
+              }
+            });
+          });
+
+          let result = await sendAutofill(tab.id);
+          if (result.missing) {
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId: tab.id, allFrames: true },
+                files: ['content.js']
+              });
+              result = await sendAutofill(tab.id);
+            } catch (injectErr) {
+              console.warn('Could not inject content.js:', injectErr);
+            }
+          }
+
+          autofilled = result.filled;
+          noEditableField = !autofilled && !result.missing;
+        }
+      } catch (err) {
+        console.warn('Tab autofill error:', err);
+      }
+    }
+
+    // 2. Copy to clipboard as a separate, reliable action.
     let copied = false;
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -230,66 +288,11 @@ async function autofillAndCopy(text, btnElement = null) {
       }, 1500);
     }
 
-    // 2. Send message to content script
-    let autofilled = false;
-
-    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
-      try {
-        let tab = null;
-        try {
-          const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-          if (tabs && tabs.length > 0) tab = tabs[0];
-        } catch (_) {}
-
-        if (!tab) {
-          try {
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (tabs && tabs.length > 0) tab = tabs[0];
-          } catch (_) {}
-        }
-
-        if (tab && tab.id && tab.url &&
-            !tab.url.startsWith('chrome://') &&
-            !tab.url.startsWith('edge://') &&
-            !tab.url.startsWith('chrome-extension://')) {
-
-          // Helper: send the autofill message and wait for response
-          const sendAutofill = (tabId) => new Promise((resolve) => {
-            chrome.tabs.sendMessage(tabId, { action: 'autofill', text }, (res) => {
-              if (chrome.runtime.lastError || !res) {
-                resolve({ filled: false, missing: !!chrome.runtime.lastError });
-              } else {
-                resolve({ filled: res.filled === true, missing: false });
-              }
-            });
-          });
-
-          let result = await sendAutofill(tab.id);
-
-          if (result.missing) {
-            // Content script not present — inject the file, then retry
-            try {
-              await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                files: ['content.js']
-              });
-              await new Promise(r => setTimeout(r, 100));
-              result = await sendAutofill(tab.id);
-            } catch (injectErr) {
-              console.warn('Could not inject content.js:', injectErr);
-            }
-          }
-
-          autofilled = result.filled;
-        }
-      } catch (err) {
-        console.warn('Tab autofill error:', err);
-      }
-    }
-
     // Toast feedback
     if (autofilled) {
       showToast('Auto-filled into form & copied!', '⚡');
+    } else if (noEditableField && copied) {
+      showToast('Copied — click inside a field first', 'i');
     } else if (copied) {
       showToast('Copied to clipboard!', '✓');
     } else {
