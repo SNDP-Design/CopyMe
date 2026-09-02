@@ -46,7 +46,13 @@
   }
 
   function isGoogleSheetsPage() {
-    return location.hostname === 'docs.google.com' && location.pathname.includes('/spreadsheets/');
+    return (location.hostname === 'docs.google.com' && location.pathname.includes('/spreadsheets/')) ||
+      document.referrer.includes('docs.google.com/spreadsheets/');
+  }
+
+  function isGoogleDocsPage() {
+    return (location.hostname === 'docs.google.com' && location.pathname.includes('/document/')) ||
+      document.referrer.includes('docs.google.com/document/');
   }
 
   function isGoogleSheetsGridElement(el) {
@@ -206,6 +212,7 @@
     // Case 2: Rich Text Editors (Twitter/X, Claude, ChatGPT, Notion, Discord, ProseMirror, Lexical, Draft.js)
     if (isContentEditableElement(element)) {
       const targetEditor = element.isContentEditable ? element : (element.closest('[contenteditable]') || element);
+      const beforeText = targetEditor.textContent || '';
       try { targetEditor.focus(); } catch (_) {}
 
       if (savedRange) {
@@ -222,7 +229,7 @@
         // Some editors insert successfully but return false from execCommand.
         // Treat the command as one insertion so the fallback cannot duplicate it.
         document.execCommand('insertText', false, text);
-        inserted = true;
+        inserted = (targetEditor.textContent || '') !== beforeText;
       } catch (_) {
         try {
           const selection = window.getSelection();
@@ -313,20 +320,19 @@
       : (document.querySelector('#waffle-grid-container, .waffle-grid-container, [role="grid"]') || document.body);
 
     try {
-      const clipboardData = new DataTransfer();
-      clipboardData.setData('text/plain', text);
-      const pasteEvent = new ClipboardEvent('paste', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        clipboardData
-      });
+      target.focus();
+      return document.execCommand('paste');
+    } catch (_) {
+      return false;
+    }
+  }
 
-      if (!target.dispatchEvent(pasteEvent)) return true;
-    } catch (_) {}
+  function pasteIntoGoogleDocs(target) {
+    if (!target || !isGoogleDocsPage()) return false;
 
     try {
       target.focus();
+      // Google Docs processes native paste on its hidden editor input.
       return document.execCommand('paste');
     } catch (_) {
       return false;
@@ -383,6 +389,15 @@
       const target = getTargetElement();
       if (!target) {
         return { ready: true, filled: false, reason: 'no_input_focused' };
+      }
+
+      if (isGoogleDocsPage()) {
+        const pasted = pasteIntoGoogleDocs(target);
+        if (pasted) {
+          lastProcessedText = text;
+          lastProcessedTime = now;
+        }
+        return { ready: true, filled: pasted, googleDocs: true };
       }
 
       if (collapseExactDuplicate(target, text)) {
